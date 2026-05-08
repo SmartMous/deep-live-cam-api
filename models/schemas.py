@@ -110,18 +110,19 @@ class ConfigUpdateRequest(BaseModel):
 
 
 class ConfigResponse(BaseModel):
-    execution_provider: str
-    max_memory: Optional[int]
-    execution_threads: Optional[int]
-    keep_fps: bool
-    keep_audio: bool
-    many_faces: bool
-    map_faces: bool
-    nsfw_filter: bool
-    video_encoder: str
-    video_quality: int
-    mouth_mask: bool
-    frame_processors: List[str]
+    dlc_available: bool = True
+    execution_provider: str = "cuda"
+    max_memory: Optional[int] = None
+    execution_threads: Optional[int] = None
+    keep_fps: bool = True
+    keep_audio: bool = True
+    many_faces: bool = False
+    map_faces: bool = False
+    nsfw_filter: bool = False
+    video_encoder: str = "libx264"
+    video_quality: int = 18
+    mouth_mask: bool = False
+    frame_processors: List[str] = []
 
 
 # ---------- Status ----------

@@ -2,6 +2,8 @@
 
 Handles path setup, module importing, and globals manipulation.
 DOES NOT modify any file under DEEP_LIVE_CAM_PATH.
+
+All DLC-dependent imports are LAZY — the API starts even without onnxruntime/DLC installed.
 """
 
 import os
@@ -35,27 +37,47 @@ if sys.platform == "win32":
                 if os.path.isdir(_bin_dir):
                     os.environ["PATH"] = _bin_dir + os.pathsep + os.environ["PATH"]
 
-# Suppress TF logs
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-
+# Suppress warnings
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="insightface")
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-import onnxruntime
-from modules import core as dlc_core
-import modules.globals as dlc_globals
+# ---------- Lazy DLC imports (deferred until first use) ----------
+_dlc_core = None
+_dlc_globals = None
+_onnxruntime = None
 
 
-# ---------- Helpers ----------
-def get_available_providers() -> list[str]:
+def _ensure_dlc():
+    """Lazy-load DLC + onnxruntime on first call. Raises ImportError if unavailable."""
+    global _dlc_core, _dlc_globals, _onnxruntime
+    if _dlc_core is None:
+        try:
+            import onnxruntime as _ort
+            from modules import core as _c
+            import modules.globals as _g
+        except ImportError as e:
+            raise ImportError(
+                "onnxruntime or Deep-Live-Cam modules not found. "
+                "Please install Deep-Live-Cam dependencies: "
+                "pip install onnxruntime-gpu && pip install -r /path/to/Deep-Live-Cam/requirements.txt"
+            ) from e
+        _onnxruntime = _ort
+        _dlc_core = _c
+        _dlc_globals = _g
+
+
+def get_available_providers() -> list:
     """Return decoded (short-form) available execution providers."""
-    return dlc_core.encode_execution_providers(
-        onnxruntime.get_available_providers()
+    _ensure_dlc()
+    return _dlc_core.encode_execution_providers(
+        _onnxruntime.get_available_providers()
     )
 
 
 def suggest_default_provider() -> str:
-    return dlc_core.suggest_default_execution_provider()
+    _ensure_dlc()
+    return _dlc_core.suggest_default_execution_provider()
 
 
 def apply_config(
@@ -73,32 +95,41 @@ def apply_config(
     face_enhancer: bool = False,
 ) -> None:
     """Apply processing configuration to DLC globals."""
+    _ensure_dlc()
     if execution_provider:
-        decoded = dlc_core.decode_execution_providers([execution_provider])
-        dlc_globals.execution_providers = decoded
+        decoded = _dlc_core.decode_execution_providers([execution_provider])
+        _dlc_globals.execution_providers = decoded
     if max_memory is not None:
-        dlc_globals.max_memory = max_memory
+        _dlc_globals.max_memory = max_memory
     if execution_threads is not None:
-        dlc_globals.execution_threads = execution_threads
-
-    dlc_globals.keep_fps = keep_fps
-    dlc_globals.keep_audio = keep_audio
-    dlc_globals.many_faces = many_faces
-    dlc_globals.map_faces = map_faces
-    dlc_globals.nsfw_filter = nsfw_filter
-    dlc_globals.video_encoder = video_encoder
-    dlc_globals.video_quality = video_quality
-    dlc_globals.mouth_mask = mouth_mask
-
+        _dlc_globals.execution_threads = execution_threads
+    _dlc_globals.keep_fps = keep_fps
+    _dlc_globals.keep_audio = keep_audio
+    _dlc_globals.many_faces = many_faces
+    _dlc_globals.map_faces = map_faces
+    _dlc_globals.nsfw_filter = nsfw_filter
+    _dlc_globals.video_encoder = video_encoder
+    _dlc_globals.video_quality = video_quality
+    _dlc_globals.mouth_mask = mouth_mask
     # Frame processors
     fps = ["face_swapper"]
     if face_enhancer:
         fps.append("face_enhancer")
-    dlc_globals.frame_processors = fps
+    _dlc_globals.frame_processors = fps
     for k in ("face_enhancer", "face_enhancer_gpen256", "face_enhancer_gpen512"):
-        dlc_globals.fp_ui[k] = (k in fps)
+        _dlc_globals.fp_ui[k] = (k in fps)
 
 
-def get_globals() -> "modules.globals":
+def get_globals():
     """Return the DLC globals module for direct access."""
-    return dlc_globals
+    _ensure_dlc()
+    return _dlc_globals
+
+
+def process_image(source_path: str, target_path: str, output_path: str) -> bool:
+    """Process a single image face swap."""
+    _ensure_dlc()
+    from modules.processors.frame.core import get_frame_processors_modules
+    for fp in get_frame_processors_modules(_dlc_globals.frame_processors):
+        fp.process_image(source_path, target_path, output_path)
+    return os.path.exists(output_path)
